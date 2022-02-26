@@ -1,6 +1,7 @@
 from json import loads
 from multiprocessing import cpu_count
 from string import punctuation
+from typing import Tuple
 
 from joblib import Parallel, delayed
 from pandas import DataFrame, json_normalize, read_json
@@ -24,7 +25,7 @@ class Zemberek_Server_Pos_Tagger:
             print(str(e))
             return None
 
-    def __remove_punctuation(self, text):
+    def remove_punctuation(self, text: str):
         new_text = "".join([i for i in text if i not in punctuation])
         return new_text
 
@@ -55,7 +56,7 @@ class Zemberek_Server_Pos_Tagger:
         else:
             raise Exception("Response not OK.Status Code:" + response.status_code)
 
-    def __is_text_empty(self, text):
+    def is_text_empty(self, text):
         if text.replace(" ", "") == "":
             return True
         else:
@@ -63,8 +64,8 @@ class Zemberek_Server_Pos_Tagger:
 
     def get_df_pos(
         self, df: DataFrame, user_restriction_list=None
-    ) -> tuple(dict[dict], dict):
-        """Gets the part of speech tags in the messages column of the given dataframe.
+    ) -> Tuple[dict[dict], dict]:
+        """Gets the part of speech tags in the message column of the given dataframe.
         Also keeps track of the starting part of speech tags
 
         Parameters
@@ -73,7 +74,7 @@ class Zemberek_Server_Pos_Tagger:
             DataFrame that contains data and meta-data for telegram messages
         user_restriction_list :
             Optional restriction over messages. Only processes the messages
-            that comes from the users in the list.
+            that come from the users in the list.
 
         Returns
         -------
@@ -101,6 +102,10 @@ class Zemberek_Server_Pos_Tagger:
             post_type = row["type"]
             post_author = row["from"]
             text = row["text"]
+
+            if type(text) is not str:
+                continue
+
             text = self.__remove_punctuation(text)
 
             if post_type != "message":
@@ -115,14 +120,14 @@ class Zemberek_Server_Pos_Tagger:
                 if post_author not in user_restriction_list:
                     continue
 
-            word_list = text.split(" ")
-            pos_tag_list = self.get_text_pos(text)
+            word_list = text.split()
+            pos_tag_list = self.__get_text_pos(text)
 
             # Add the start part of the sentence if not existent
             if pos_tag_list[0] not in pos_start_dictionary:
                 pos_start_dictionary[pos_tag_list[0]] = 1
             else:
-                pos_start_dictionary += 1
+                pos_start_dictionary[pos_tag_list[0]] += 1
 
             for index, pos in enumerate(pos_tag_list):
 
@@ -132,14 +137,39 @@ class Zemberek_Server_Pos_Tagger:
 
                 # Add word if not in sub dictionary
                 if word_list[index] not in pos_tag_dictionary[pos]:
-                    pos_tag_dictionary[pos][word_list[index]] == 1
+                    pos_tag_dictionary[pos][word_list[index]] = 1
 
                 else:
                     pos_tag_dictionary[pos][word_list[index]] += 1
 
         return pos_tag_dictionary, pos_start_dictionary
 
+    def get_df_pos_parallel(self) -> Tuple[dict[dict], dict]:
+        pos_start_dictionary_list = []
+        pos_tag_dictionary_list = []
+        df_list = []
+        df_split_size = len(self.df.index) // self.core_count
 
+        for index in range(df_split_size):
+
+            # If last part get until the end of dataframe
+            if (index + 1) == df_split_size:
+                new_df = self.df[index:]
+                df_list.append(new_df)
+                break
+
+            new_df = df[index : index + 1]
+            df_list.append(new_df)
+
+        pos_tag_dictionary_list, pos_start_dictionary_list = zip(
+            *Parallel(n_jobs=self.core_count, prefer="processes")(
+                [delayed(self.get_df_pos)(i) for i in df_list]
+            )
+        )
+        return pos_tag_dictionary_list, pos_start_dictionary_list
+
+
+# TODO: DEBUG, sumtin wrong dunno what
 def get_probability_dict(total_encounter: dict):
     """Receiving the {word:encounter} of the words as dictionary, converts the
     word encounters to ratio of words to total encounter count (word/total
@@ -156,11 +186,10 @@ def get_probability_dict(total_encounter: dict):
         Encounter probabilty of the words
     """
     total_word_encounter = 0
+    prob_dictionary = {}
 
     for encounter in total_encounter.values():
         total_word_encounter += total_encounter
-
-    prob_dictionary = {}
 
     for word in total_encounter:
         prob_dictionary[word] = total_encounter[word] / total_word_encounter
@@ -171,4 +200,8 @@ def get_probability_dict(total_encounter: dict):
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 df = read_json(file_path)
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
-print(req_obj.get_text_pos("Senle ben bir değiliz"))
+pos_tag_dict, pos_start_dict = req_obj.get_df_pos_parallel()
+# print("Pos_Tag :")
+# print(pos_tag_dict)
+# print("Pos_Start :")
+# print(pos_start_dict)
