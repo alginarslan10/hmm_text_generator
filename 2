@@ -1,3 +1,5 @@
+import pdb
+from multiprocessing import cpu_count
 from string import punctuation
 from timeit import timeit
 from typing import Tuple
@@ -12,6 +14,7 @@ class Zemberek_Server_Pos_Tagger:
     def __init__(self, host_name: str, host_port: int, file_path: str):
         self.host_name = host_name
         self.host_port = host_port
+        self.core_count = cpu_count()
         self.file_path = file_path
         self.df = self.__read_to_df()
 
@@ -48,7 +51,12 @@ class Zemberek_Server_Pos_Tagger:
 
         endpoint = self.host_name + ":" + str(self.host_port) + "/" + "find_pos"
         data = {"sentence": text}
-        response = post(url=endpoint, data=data)
+
+        try:
+            response = post(url=endpoint, data=data)
+
+        except Exception as e:
+            raise e
 
         if response.ok:
             return [pos_tag["pos"] for pos_tag in response.json()]
@@ -62,38 +70,30 @@ class Zemberek_Server_Pos_Tagger:
             return False
 
     def get_df_pos(
-        self,
-        df: DataFrame,
-        user_restriction_list=None,
-        # bot_messages_allowed=False
-    ) -> Tuple[dict[dict], dict, dict]:
+        self, df: DataFrame, user_restriction_list=None
+    ) -> Tuple[dict[dict], dict]:
         """Gets the part of speech tags in the message column of the given dataframe.
-         Also keeps track of the starting and ending part of speech tags
+        Also keeps track of the starting part of speech tags
 
-         Parameters
-         ----------
-         df : DataFrame
-             DataFrame that contains data and meta-data for telegram messages
+        Parameters
+        ----------
+        df : DataFrame
+            DataFrame that contains data and meta-data for telegram messages
+        user_restriction_list :
+            Optional restriction over messages. Only processes the messages
+            that come from the users in the list.
 
-        user_restriction_list : list
-             Optional restriction over messages. Only processes the messages
-             that come from the users in the list.
+        Returns
+        -------
+        pos_tag_dictionary : dict[dict]
+            Part of speech tags' word encounter. First dictonary contains part
+            of speech tags as key and words encountered dictionary as value.
+            Nested dictionary contains words encountered as key, and how many
+            times the word has been encountered as value.
+        pos_start_dictionary :dict
+            Keeps track of sentence starting pos tags. Pos tag name as key and
+            encounter number as value.
 
-         Returns
-         -------
-         pos_tag_dictionary : dict[dict]
-             Part of speech tags' word encounter. First dictonary contains part
-             of speech tags as key and words encountered dictionary as value.
-             Nested dictionary contains words encountered as key, and how many
-             times the word has been encountered as value.
-
-         pos_start_dictionary :dict
-             Keeps track of sentence starting pos tags. Pos tag name as key and
-             encounter number as value.
-
-         pos_end_dictionart :dict
-             Keeps track of sentence ending pos tags. Pos tag name as key and
-             encounter number as value
 
 
         """
@@ -104,7 +104,6 @@ class Zemberek_Server_Pos_Tagger:
 
         pos_tag_dictionary = {}
         pos_start_dictionary = {}
-        pos_end_dictionary = {}
 
         for index, row in df.iterrows():
             post_type = row["type"]
@@ -130,19 +129,13 @@ class Zemberek_Server_Pos_Tagger:
 
             word_list = text.split()
             pos_tag_list = self.get_text_pos(text)
-            print(str(index))
+            print(text)
 
             # Add the start part of the sentence if not existent
             if pos_tag_list[0] not in pos_start_dictionary:
                 pos_start_dictionary[pos_tag_list[0]] = 1
             else:
                 pos_start_dictionary[pos_tag_list[0]] += 1
-
-            # Add the end part of the sentence if not existent
-            if pos_tag_list[-1] not in pos_end_dictionary:
-                pos_end_dictionary[pos_tag_list[-1]] = 1
-            else:
-                pos_end_dictionary[pos_tag_list[-1]] += 1
 
             for index, pos in enumerate(pos_tag_list):
 
@@ -157,78 +150,62 @@ class Zemberek_Server_Pos_Tagger:
                 else:
                     pos_tag_dictionary[pos][word_list[index]] += 1
 
-        return pos_tag_dictionary, pos_start_dictionary, pos_end_dictionary
+        return pos_tag_dictionary, pos_start_dictionary
 
-    def get_df_pos_parallel(self) -> Tuple[dict[dict], dict, dict]:
+    # TODO: Connection refused, dunno why, analyze and solve
+    def get_df_pos_parallel(self) -> Tuple[dict[dict], dict]:
         pos_start_dictionary_list = []
-        pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
-
-        # Optimal number of cores server can handle, hand-optimized :(
-        jobs_in_parallel = 3
+        jobs_in_parallel = self.core_count // 2
         df_list = array_split(self.df, jobs_in_parallel)
 
-        (
-            pos_tag_dictionary_list,
-            pos_start_dictionary_list,
-            pos_end_dictionary_list,
-        ) = zip(
+        # pdb.set_trace()
+        pos_tag_dictionary_list, pos_start_dictionary_list = zip(
             *Parallel(n_jobs=jobs_in_parallel)(
                 [delayed(self.get_df_pos)(i) for i in df_list]
             )
         )
-
-        return (
-            pos_tag_dictionary_list,
-            pos_start_dictionary_list,
-            pos_end_dictionary_list,
-        )
-
-    def get_probability_dict(total_encounter: dict):
-        """Receiving the {word:encounter} of the words as dictionary, converts the
-        word encounters to ratio of words to total encounter count (word/total
-        encounter).
-
-        Parameters
-        ----------
-        total_encounter : dict
-            Word encounters given as dictionary
-
-        Returns
-        ----------
-        prob_dictionary: dict
-            Encounter probabilty of the words
-        """
-        total_word_encounter = 0
-        prob_dictionary = {}
-
-        for encounter in total_encounter.values():
-            total_word_encounter += total_encounter
-
-        for word in total_encounter:
-            prob_dictionary[word] = total_encounter[word] / total_word_encounter
-
-        return prob_dictionary
+        return pos_tag_dictionary_list, pos_start_dictionary_list
 
 
-class Multiprocess_test:
-    def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
-        dic, dicti = req_obj.get_df_pos_parallel()
+def get_probability_dict(total_encounter: dict):
+    """Receiving the {word:encounter} of the words as dictionary, converts the
+    word encounters to ratio of words to total encounter count (word/total
+    encounter).
 
-    def test_non_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
-        dic, dicti = req_obj.get_df_pos(req_obj.df)
+    Parameters
+    ----------
+    total_encounter : dict
+        Word encounters given as dictionary
 
-    def parallel_speed_test(req_obj: Zemberek_Server_Pos_Tagger):
+    Returns
+    ----------
+    prob_dictionary: dict
+        Encounter probabilty of the words
+    """
+    total_word_encounter = 0
+    prob_dictionary = {}
 
-        parallel_res = timeit(
-            "test_parallel_time(req_obj)", globals=globals(), number=1
-        )
-        non_parallel_res = timeit(
-            "test_non_parallel_time(req_obj)", globals=globals(), number=1
-        )
-        print(parallel_res / non_parallel_res)
+    for encounter in total_encounter.values():
+        total_word_encounter += total_encounter
+
+    for word in total_encounter:
+        prob_dictionary[word] = total_encounter[word] / total_word_encounter
+
+    return prob_dictionary
 
 
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 df = read_json(file_path)
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
+# pos_tag_dict, pos_start_dict = req_obj.get_df_pos_parallel()
+print(
+    str(
+        timeit(lambda: req_obj.get_df_pos_parallel())
+        / timeit(lambda: req_obj.get_df_pos(req_obj.df))
+    )
+)
+
+# print(pos_tag_dict)
+# print("Pos_Start :")
+# print(pos_start_dict)
