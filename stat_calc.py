@@ -1,8 +1,9 @@
+from pickle import dump, load
 from string import punctuation
 from timeit import timeit
 from typing import Tuple
 
-from joblib import Parallel, cpu_count, delayed
+from joblib import Parallel, delayed
 from numpy import array_split
 from pandas import DataFrame, json_normalize, read_json
 from requests import post
@@ -97,7 +98,6 @@ class Zemberek_Server_Pos_Tagger:
 
 
         """
-
         # Check dataframe
         if df is None:
             return None
@@ -168,13 +168,13 @@ class Zemberek_Server_Pos_Tagger:
             else:
                 new_dict[start] = old_dict[start]
 
-    # TODO: Something wrong as always, fix next time
     def merge_nested_dict(self, new_dict: dict[dict], old_dict: dict[dict]):
 
         for pos in old_dict:
+
             if pos in new_dict:
 
-                for word in pos:
+                for word in old_dict[pos]:
                     if word in new_dict[pos]:
                         new_dict[pos][word] += old_dict[pos][word]
                     else:
@@ -183,24 +183,42 @@ class Zemberek_Server_Pos_Tagger:
             else:
                 new_dict[pos] = old_dict[pos]
 
-    def get_df_pos_parallel(self) -> Tuple[dict[dict], dict, dict]:
+    def get_df_pos_parallel(
+        self, cheat_pickle=False
+    ) -> Tuple[dict[str:dict], dict[str:int], dict[str:int]]:
         pos_start_dictionary_list = []
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
 
-        # Optimal number of cores server can handle, hand-optimized :(
-        jobs_in_parallel = 3
-        df_list = array_split(self.df, jobs_in_parallel)
+        if not cheat_pickle:
+            # Optimal number of cores server can handle, hand-optimized :(
+            jobs_in_parallel = 3
+            df_list = array_split(self.df, jobs_in_parallel)
 
-        (
-            pos_tag_dictionary_list,
-            pos_start_dictionary_list,
-            pos_end_dictionary_list,
-        ) = zip(
-            *Parallel(n_jobs=jobs_in_parallel)(
-                [delayed(self.get_df_pos)(i) for i in df_list]
+            (
+                pos_tag_dictionary_list,
+                pos_start_dictionary_list,
+                pos_end_dictionary_list,
+            ) = zip(
+                *Parallel(n_jobs=jobs_in_parallel)(
+                    [delayed(self.get_df_pos)(i) for i in df_list]
+                )
             )
-        )
+
+            pickle_list = (
+                pos_tag_dictionary_list,
+                pos_start_dictionary_list,
+                pos_end_dictionary_list,
+            )
+            with open("a.pickle", "wb") as f:
+                dump(pickle_list, f)
+
+        else:
+            with open(cheat_pickle, "rb") as f:
+                pickle_list = load(f)
+            pos_tag_dictionary_list = pickle_list[0]
+            pos_start_dictionary_list = pickle_list[1]
+            pos_end_dictionary_list = pickle_list[2]
 
         # Unite the dictionaries
         new_start_dictionary = {}
@@ -216,7 +234,7 @@ class Zemberek_Server_Pos_Tagger:
             self.merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
         return new_tag_dictionary, new_start_dictionary, new_end_dictionary
 
-    def get_probability_dict(total_encounter: dict):
+    def get_probability_dict(self, total_encounter: dict) -> dict[str:float]:
         """Receiving the {word:encounter} of the words as dictionary, converts the
         word encounters to ratio of words to total encounter count (word/total
         encounter).
@@ -235,7 +253,7 @@ class Zemberek_Server_Pos_Tagger:
         prob_dictionary = {}
 
         for encounter in total_encounter.values():
-            total_word_encounter += total_encounter
+            total_word_encounter += encounter
 
         for word in total_encounter:
             prob_dictionary[word] = total_encounter[word] / total_word_encounter
@@ -243,7 +261,6 @@ class Zemberek_Server_Pos_Tagger:
         return prob_dictionary
 
 
-"""
 def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
     req_obj.get_df_pos_parallel()
 
@@ -259,11 +276,11 @@ def parallel_speed_test(req_obj: Zemberek_Server_Pos_Tagger):
         "test_non_parallel_time(req_obj)", globals=globals(), number=1
     )
     print(parallel_res / non_parallel_res)
-"""
+
 
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 df = read_json(file_path)
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
 # parallel_speed_test(req_obj)
-tag, start, end = req_obj.get_df_pos_parallel()
-print(tag, start, end)
+tag, start, end = req_obj.get_df_pos_parallel(cheat_pickle="a.pickle")
+start_prob = req_obj.get_probability_dict(start)
