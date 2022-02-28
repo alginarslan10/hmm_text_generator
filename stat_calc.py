@@ -2,7 +2,7 @@ from string import punctuation
 from timeit import timeit
 from typing import Tuple
 
-from joblib import Parallel, delayed
+from joblib import Parallel, cpu_count, delayed
 from numpy import array_split
 from pandas import DataFrame, json_normalize, read_json
 from requests import post
@@ -130,7 +130,7 @@ class Zemberek_Server_Pos_Tagger:
 
             word_list = text.split()
             pos_tag_list = self.get_text_pos(text)
-            print(str(index))
+            # print(str(index))
 
             # Add the start part of the sentence if not existent
             if pos_tag_list[0] not in pos_start_dictionary:
@@ -159,6 +159,30 @@ class Zemberek_Server_Pos_Tagger:
 
         return pos_tag_dictionary, pos_start_dictionary, pos_end_dictionary
 
+    def merge_start_end_dict(self, new_dict: dict, old_dict: dict):
+
+        for start in old_dict:
+
+            if start in new_dict:
+                new_dict[start] += old_dict[start]
+            else:
+                new_dict[start] = old_dict[start]
+
+    # TODO: Something wrong as always, fix next time
+    def merge_nested_dict(self, new_dict: dict[dict], old_dict: dict[dict]):
+
+        for pos in old_dict:
+            if pos in new_dict:
+
+                for word in pos:
+                    if word in new_dict[pos]:
+                        new_dict[pos][word] += old_dict[pos][word]
+                    else:
+                        new_dict[pos][word] = old_dict[pos][word]
+
+            else:
+                new_dict[pos] = old_dict[pos]
+
     def get_df_pos_parallel(self) -> Tuple[dict[dict], dict, dict]:
         pos_start_dictionary_list = []
         pos_end_dictionary_list = []
@@ -178,11 +202,19 @@ class Zemberek_Server_Pos_Tagger:
             )
         )
 
-        return (
-            pos_tag_dictionary_list,
-            pos_start_dictionary_list,
-            pos_end_dictionary_list,
-        )
+        # Unite the dictionaries
+        new_start_dictionary = {}
+        new_end_dictionary = {}
+        new_tag_dictionary = {}
+
+        for i in range(len(pos_tag_dictionary_list)):
+            self.merge_start_end_dict(
+                new_start_dictionary, pos_start_dictionary_list[i]
+            )
+            self.merge_start_end_dict(new_end_dictionary, pos_end_dictionary_list[i])
+
+            self.merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
+        return new_tag_dictionary, new_start_dictionary, new_end_dictionary
 
     def get_probability_dict(total_encounter: dict):
         """Receiving the {word:encounter} of the words as dictionary, converts the
@@ -211,24 +243,27 @@ class Zemberek_Server_Pos_Tagger:
         return prob_dictionary
 
 
-class Multiprocess_test:
-    def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
-        dic, dicti = req_obj.get_df_pos_parallel()
+"""
+def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
+    req_obj.get_df_pos_parallel()
 
-    def test_non_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
-        dic, dicti = req_obj.get_df_pos(req_obj.df)
 
-    def parallel_speed_test(req_obj: Zemberek_Server_Pos_Tagger):
+def test_non_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
+    req_obj.get_df_pos(req_obj.df)
 
-        parallel_res = timeit(
-            "test_parallel_time(req_obj)", globals=globals(), number=1
-        )
-        non_parallel_res = timeit(
-            "test_non_parallel_time(req_obj)", globals=globals(), number=1
-        )
-        print(parallel_res / non_parallel_res)
 
+def parallel_speed_test(req_obj: Zemberek_Server_Pos_Tagger):
+
+    parallel_res = timeit("test_parallel_time(req_obj)", globals=globals(), number=1)
+    non_parallel_res = timeit(
+        "test_non_parallel_time(req_obj)", globals=globals(), number=1
+    )
+    print(parallel_res / non_parallel_res)
+"""
 
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 df = read_json(file_path)
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
+# parallel_speed_test(req_obj)
+tag, start, end = req_obj.get_df_pos_parallel()
+print(tag, start, end)
