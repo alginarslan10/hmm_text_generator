@@ -276,11 +276,3 @@ def parallel_speed_test(req_obj: Zemberek_Server_Pos_Tagger):
         "test_non_parallel_time(req_obj)", globals=globals(), number=1
     )
     print(parallel_res / non_parallel_res)
-
-
-file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
-df = read_json(file_path)
-req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
-# parallel_speed_test(req_obj)
-tag, start, end = req_obj.get_df_pos_parallel(cheat_pickle="a.pickle")
-start_prob = req_obj.get_probability_dict(start)
