@@ -1,3 +1,4 @@
+from os import path
 from pickle import dump, load
 from string import punctuation
 from timeit import timeit
@@ -25,6 +26,12 @@ class Zemberek_Server_Pos_Tagger:
             print(str(e))
             return None
 
+    def is_text_empty(self, text):
+        if text.replace(" ", "") == "":
+            return True
+        else:
+            return False
+
     def remove_punctuation(self, text: str):
         new_text = "".join([i for i in text if i not in punctuation])
         return new_text
@@ -44,7 +51,7 @@ class Zemberek_Server_Pos_Tagger:
             A list of tuples that contains word and pos tag of it.
 
         """
-        if (text == "") or (text == " "):
+        if self.is_text_empty(text):
             raise Exception("Empty text")
 
         endpoint = self.host_name + ":" + str(self.host_port) + "/" + "find_pos"
@@ -56,17 +63,39 @@ class Zemberek_Server_Pos_Tagger:
         else:
             raise Exception("Response not OK.Status Code:" + response.status_code)
 
-    def is_text_empty(self, text):
-        if text.replace(" ", "") == "":
-            return True
+    def add_row_and_column_to_matrix(self, matrix: list[[int]]) -> list[[int]]:
+        # Check if matrix empty
+        if len(matrix[0]) != 0:
+            # Add column
+            matrix = matrix + [[0] * (len(matrix[0]))]
+
+            for row in matrix:
+                row.append(0)
+
         else:
-            return False
+            matrix = [[0]]
+
+        return matrix
+
+    def update_transition_matrix(
+        self,
+        transition_matrix: list[[int]],
+        transition_index_list: [str],
+        pos_list: [str],
+    ) -> list[[int]]:
+
+        for pos in range(len(pos_list) - 1):
+            row = transition_index_list.index(pos_list[pos])
+            col = transition_index_list.index(pos_list[pos + 1])
+
+            transition_matrix[row][col] += 1
+
+        return
 
     def get_df_pos(
         self,
         df: DataFrame,
         user_restriction_list=None,
-        # bot_messages_allowed=False
     ) -> Tuple[dict[dict], dict, dict]:
         """Gets the part of speech tags in the message column of the given dataframe.
          Also keeps track of the starting and ending part of speech tags
@@ -105,6 +134,8 @@ class Zemberek_Server_Pos_Tagger:
         pos_tag_dictionary = {}
         pos_start_dictionary = {}
         pos_end_dictionary = {}
+        transition_matrix = []
+        transition_index_list = []
 
         for index, row in df.iterrows():
             post_type = row["type"]
@@ -130,7 +161,6 @@ class Zemberek_Server_Pos_Tagger:
 
             word_list = text.split()
             pos_tag_list = self.get_text_pos(text)
-            # print(str(index))
 
             # Add the start part of the sentence if not existent
             if pos_tag_list[0] not in pos_start_dictionary:
@@ -150,6 +180,12 @@ class Zemberek_Server_Pos_Tagger:
                 if pos not in pos_tag_dictionary:
                     pos_tag_dictionary[pos] = {}
 
+                    # If pos is not in dictionary is not in transition matrix
+                    transition_index_list.append(pos)
+                    transition_matrix = self.add_row_and_column_to_matrix(
+                        transition_matrix
+                    )
+
                 # Add word if not in sub dictionary
                 if word_list[index] not in pos_tag_dictionary[pos]:
                     pos_tag_dictionary[pos][word_list[index]] = 1
@@ -157,6 +193,10 @@ class Zemberek_Server_Pos_Tagger:
                 else:
                     pos_tag_dictionary[pos][word_list[index]] += 1
 
+            # Update transition matrix when all new pos rows and columns added
+            transition_matrix = self.update_transition_matrix(
+                transition_matrix, transition_index_list, pos_tag_list
+            )
         return pos_tag_dictionary, pos_start_dictionary, pos_end_dictionary
 
     def merge_start_end_dict(self, new_dict: dict, old_dict: dict):
@@ -190,7 +230,7 @@ class Zemberek_Server_Pos_Tagger:
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
 
-        if not cheat_pickle:
+        if not cheat_pickle or path.exists("messages.pickle"):
             # Optimal number of cores server can handle, hand-optimized :(
             jobs_in_parallel = 3
             df_list = array_split(self.df, jobs_in_parallel)
@@ -205,34 +245,37 @@ class Zemberek_Server_Pos_Tagger:
                 )
             )
 
+            # Unite the dictionaries
+            new_start_dictionary = {}
+            new_end_dictionary = {}
+            new_tag_dictionary = {}
+
+            for i in range(len(pos_tag_dictionary_list)):
+                self.merge_start_end_dict(
+                    new_start_dictionary, pos_start_dictionary_list[i]
+                )
+                self.merge_start_end_dict(
+                    new_end_dictionary, pos_end_dictionary_list[i]
+                )
+
+                self.merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
+
             pickle_list = (
-                pos_tag_dictionary_list,
-                pos_start_dictionary_list,
-                pos_end_dictionary_list,
+                new_tag_dictionary,
+                new_start_dictionary,
+                new_end_dictionary,
             )
-            with open("a.pickle", "wb") as f:
+            with open("messages.pickle", "wb") as f:
                 dump(pickle_list, f)
 
         else:
             with open(cheat_pickle, "rb") as f:
                 pickle_list = load(f)
-            pos_tag_dictionary_list = pickle_list[0]
-            pos_start_dictionary_list = pickle_list[1]
-            pos_end_dictionary_list = pickle_list[2]
+            new_tag_dictionary = pickle_list[0]
+            new_start_dictionary = pickle_list[1]
+            new_end_dictionary = pickle_list[2]
 
-        # Unite the dictionaries
-        new_start_dictionary = {}
-        new_end_dictionary = {}
-        new_tag_dictionary = {}
-
-        for i in range(len(pos_tag_dictionary_list)):
-            self.merge_start_end_dict(
-                new_start_dictionary, pos_start_dictionary_list[i]
-            )
-            self.merge_start_end_dict(new_end_dictionary, pos_end_dictionary_list[i])
-
-            self.merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
-        return new_tag_dictionary, new_start_dictionary, new_end_dictionary
+            return new_tag_dictionary, new_start_dictionary, new_end_dictionary
 
     def get_probability_dict(self, total_encounter: dict) -> dict[str:float]:
         """Receiving the {word:encounter} of the words as dictionary, converts the
