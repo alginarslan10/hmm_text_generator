@@ -63,40 +63,31 @@ class Zemberek_Server_Pos_Tagger:
         else:
             raise Exception("Response not OK.Status Code:" + response.status_code)
 
-    def add_row_and_column_to_matrix(self, matrix: list[[int]]) -> list[[int]]:
-        # Check if matrix empty
-        if len(matrix[0]) != 0:
-            # Add column
-            matrix = matrix + [[0] * (len(matrix[0]))]
+    def add_row_and_column_to_matrix(
+        self, matrix: list[[str, [int]]], new_pos: str
+    ) -> list[[str, [int]]]:
 
-            for row in matrix:
-                row.append(0)
+        # Check if matrix empty
+        if len(matrix) != 0:
+            # Add column
+            column_size = len(matrix[0][-1])
+            column = [0] * column_size
+            matrix.append([new_pos, column])
+
+            for row_tuple in matrix:
+                row_tuple[-1].append(0)
 
         else:
-            matrix = [[0]]
+            new_column = [new_pos, [0]]
+            matrix = matrix.append(new_column)
 
         return matrix
-
-    def update_transition_matrix(
-        self,
-        transition_matrix: list[[int]],
-        transition_index_list: [str],
-        pos_list: [str],
-    ) -> list[[int]]:
-
-        for pos in range(len(pos_list) - 1):
-            row = transition_index_list.index(pos_list[pos])
-            col = transition_index_list.index(pos_list[pos + 1])
-
-            transition_matrix[row][col] += 1
-
-        return
 
     def get_df_pos(
         self,
         df: DataFrame,
         user_restriction_list=None,
-    ) -> Tuple[dict[dict], dict, dict]:
+    ) -> Tuple[dict[dict], dict, dict, [[str, [int]]]]:
         """Gets the part of speech tags in the message column of the given dataframe.
          Also keeps track of the starting and ending part of speech tags
 
@@ -125,8 +116,29 @@ class Zemberek_Server_Pos_Tagger:
              Keeps track of sentence ending pos tags. Pos tag name as key and
              encounter number as value
 
-
         """
+        # Inner functions for transition matrix
+
+        def update_transition_matrix(
+            transition_matrix: list[[str, [int]]],
+            pos_list: [str],
+        ) -> list[[str, [int]]]:
+
+            for pos in range(len(pos_list) - 1):
+                row = pos_list[pos]
+                col = pos_list[pos + 1]
+
+                for i in range(len(transition_matrix)):
+                    if transition_matrix[i][0] == row:
+                        row_index = i
+
+                    if transition_matrix[i][0] == col:
+                        col_index = i
+
+                transition_matrix[row_index][-1][col_index] += 1
+
+            return transition_matrix
+
         # Check dataframe
         if df is None:
             return None
@@ -135,7 +147,6 @@ class Zemberek_Server_Pos_Tagger:
         pos_start_dictionary = {}
         pos_end_dictionary = {}
         transition_matrix = []
-        transition_index_list = []
 
         for index, row in df.iterrows():
             post_type = row["type"]
@@ -181,7 +192,6 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos] = {}
 
                     # If pos is not in dictionary is not in transition matrix
-                    transition_index_list.append(pos)
                     transition_matrix = self.add_row_and_column_to_matrix(
                         transition_matrix
                     )
@@ -194,38 +204,64 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos][word_list[index]] += 1
 
             # Update transition matrix when all new pos rows and columns added
-            transition_matrix = self.update_transition_matrix(
-                transition_matrix, transition_index_list, pos_tag_list
+            transition_matrix = update_transition_matrix(
+                transition_matrix, pos_tag_list
             )
-        return pos_tag_dictionary, pos_start_dictionary, pos_end_dictionary
-
-    def merge_start_end_dict(self, new_dict: dict, old_dict: dict):
-
-        for start in old_dict:
-
-            if start in new_dict:
-                new_dict[start] += old_dict[start]
-            else:
-                new_dict[start] = old_dict[start]
-
-    def merge_nested_dict(self, new_dict: dict[dict], old_dict: dict[dict]):
-
-        for pos in old_dict:
-
-            if pos in new_dict:
-
-                for word in old_dict[pos]:
-                    if word in new_dict[pos]:
-                        new_dict[pos][word] += old_dict[pos][word]
-                    else:
-                        new_dict[pos][word] = old_dict[pos][word]
-
-            else:
-                new_dict[pos] = old_dict[pos]
+        return (
+            pos_tag_dictionary,
+            pos_start_dictionary,
+            pos_end_dictionary,
+            transition_matrix,
+        )
 
     def get_df_pos_parallel(
         self, cheat_pickle=False
     ) -> Tuple[dict[str:dict], dict[str:int], dict[str:int]]:
+
+        # Get inner functions to merge later on
+        def merge_start_end_dict(new_dict: dict, old_dict: dict):
+
+            for start in old_dict:
+
+                if start in new_dict:
+                    new_dict[start] += old_dict[start]
+                else:
+                    new_dict[start] = old_dict[start]
+
+        def merge_nested_dict(new_dict: dict[dict], old_dict: dict[dict]):
+
+            for pos in old_dict:
+
+                if pos in new_dict:
+
+                    for word in old_dict[pos]:
+                        if word in new_dict[pos]:
+                            new_dict[pos][word] += old_dict[pos][word]
+                        else:
+                            new_dict[pos][word] = old_dict[pos][word]
+
+                else:
+                    new_dict[pos] = old_dict[pos]
+
+        def merge_transition_matrix(
+            new_matrix: [[str, [int]]], new_index: [str], old_matrix: [[str, [int]]]
+        ):
+            new_m_index_list = []
+            old_m_index_list = []
+
+            for i in new_matrix:
+                new_m_index_list.append(i[0])
+
+            for j in old_matrix:
+                old_m_index_list.append(j[0])
+
+                # If pos does not exist in new matrix,add
+                if j not in new_m_index_list:
+                    new_matrix = self.add_row_and_column_to_matrix(new_matrix, j)
+                    new_m_index_list.append(j)
+
+            return
+
         pos_start_dictionary_list = []
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
