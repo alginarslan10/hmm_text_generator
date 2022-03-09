@@ -63,31 +63,11 @@ class Zemberek_Server_Pos_Tagger:
         else:
             raise Exception("Response not OK.Status Code:" + response.status_code)
 
-    def add_row_and_column_to_matrix(
-        self, matrix: list[[str, [int]]], new_pos: str
-    ) -> list[[str, [int]]]:
-
-        # Check if matrix empty
-        if len(matrix) != 0:
-            # Add column
-            column_size = len(matrix[0][-1])
-            column = [0] * column_size
-            matrix.append([new_pos, column])
-
-            for row_tuple in matrix:
-                row_tuple[-1].append(0)
-
-        else:
-            new_column = [new_pos, [0]]
-            matrix = matrix.append(new_column)
-
-        return matrix
-
     def get_df_pos(
         self,
         df: DataFrame,
         user_restriction_list=None,
-    ) -> Tuple[dict[dict], dict, dict, [[str, [int]]]]:
+    ) -> Tuple[dict[dict], dict, dict, list[list[str, list[int]]]]:
         """Gets the part of speech tags in the message column of the given dataframe.
          Also keeps track of the starting and ending part of speech tags
 
@@ -116,28 +96,10 @@ class Zemberek_Server_Pos_Tagger:
              Keeps track of sentence ending pos tags. Pos tag name as key and
              encounter number as value
 
+        transition_matrix : [str,[int]]
+            Keeps track transitions between pos tags. String as the pos tag of
+            the row and [int] as the columns.
         """
-        # Inner functions for transition matrix
-
-        def update_transition_matrix(
-            transition_matrix: list[[str, [int]]],
-            pos_list: [str],
-        ) -> list[[str, [int]]]:
-
-            for pos in range(len(pos_list) - 1):
-                row = pos_list[pos]
-                col = pos_list[pos + 1]
-
-                for i in range(len(transition_matrix)):
-                    if transition_matrix[i][0] == row:
-                        row_index = i
-
-                    if transition_matrix[i][0] == col:
-                        col_index = i
-
-                transition_matrix[row_index][-1][col_index] += 1
-
-            return transition_matrix
 
         # Check dataframe
         if df is None:
@@ -192,8 +154,8 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos] = {}
 
                     # If pos is not in dictionary is not in transition matrix
-                    transition_matrix = self.add_row_and_column_to_matrix(
-                        transition_matrix
+                    transition_matrix = Pos_Data_Processor.add_row_and_column_to_matrix(
+                        transition_matrix, pos
                     )
 
                 # Add word if not in sub dictionary
@@ -204,7 +166,7 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos][word_list[index]] += 1
 
             # Update transition matrix when all new pos rows and columns added
-            transition_matrix = update_transition_matrix(
+            transition_matrix = Pos_Data_Processor.update_transition_matrix(
                 transition_matrix, pos_tag_list
             )
         return (
@@ -244,21 +206,40 @@ class Zemberek_Server_Pos_Tagger:
                     new_dict[pos] = old_dict[pos]
 
         def merge_transition_matrix(
-            new_matrix: [[str, [int]]], new_index: [str], old_matrix: [[str, [int]]]
+            new_matrix: list[list[str, list[int]]],
+            new_index: list[str],
+            old_matrix: list[list[str, list[int]]],
         ):
-            new_m_index_list = []
-            old_m_index_list = []
+            new_matrix_pos_list = []
+            old_matrix_pos_list = []
 
             for i in new_matrix:
-                new_m_index_list.append(i[0])
+                new_matrix_pos_list.append(i[0])
 
             for j in old_matrix:
-                old_m_index_list.append(j[0])
+                old_matrix_pos_list.append(j[0])
 
                 # If pos does not exist in new matrix,add
-                if j not in new_m_index_list:
-                    new_matrix = self.add_row_and_column_to_matrix(new_matrix, j)
-                    new_m_index_list.append(j)
+                if j not in new_matrix_pos_list:
+                    new_matrix = Pos_Data_Processor.add_row_and_column_to_matrix(
+                        new_matrix, j[0]
+                    )
+                    new_matrix_pos_list.append(j)
+
+            # TODO: Iterating same list twice not good, change if you can think of a
+            # better solution, also O(n) of that must be around 2n^2
+            # if index function is n, fix that bruv
+            for old_row_index in range(len(old_matrix)):
+                new_row_index = new_matrix_pos_list.index(
+                    old_matrix_pos_list[old_row_index]
+                )
+                for old_col_index in old_matrix[old_row_index][-1]:
+                    new_col_index = new_matrix_pos_list.index(
+                        old_matrix_pos_list[old_col_index]
+                    )
+                new_matrix[new_row_index][-1][new_col_index] += old_matrix[
+                    old_row_index
+                ][-1][old_col_index]
 
             return
 
@@ -266,7 +247,7 @@ class Zemberek_Server_Pos_Tagger:
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
 
-        if not cheat_pickle or path.exists("messages.pickle"):
+        if cheat_pickle or path.exists("messages.pickle"):
             # Optimal number of cores server can handle, hand-optimized :(
             jobs_in_parallel = 3
             df_list = array_split(self.df, jobs_in_parallel)
@@ -313,7 +294,55 @@ class Zemberek_Server_Pos_Tagger:
 
             return new_tag_dictionary, new_start_dictionary, new_end_dictionary
 
-    def get_probability_dict(self, total_encounter: dict) -> dict[str:float]:
+
+class Pos_Data_Processor:
+    def __init__(self):
+        return
+
+    @staticmethod
+    def add_row_and_column_to_matrix(
+        matrix: list[list[str, list[int]]], new_pos: str
+    ) -> list[list[str, list[int]]]:
+
+        # Check if matrix empty
+        if len(matrix) != 0:
+            # Add column
+            column_size = len(matrix[0][-1])
+            column = [0] * column_size
+            matrix.append([new_pos, column])
+
+            for row_tuple in matrix:
+                row_tuple[-1].append(0)
+
+        else:
+            new_column = [new_pos, [0]]
+            matrix = matrix.append(new_column)
+
+        return matrix
+
+    @staticmethod
+    def update_transition_matrix(
+        transition_matrix: list[list[str, list[int]]],
+        pos_list: [str],
+    ) -> list[list[str, list[int]]]:
+
+        for pos in range(len(pos_list) - 1):
+            row = pos_list[pos]
+            col = pos_list[pos + 1]
+
+            for i in range(len(transition_matrix)):
+                if transition_matrix[i][0] == row:
+                    row_index = i
+
+                if transition_matrix[i][0] == col:
+                    col_index = i
+
+            transition_matrix[row_index][-1][col_index] += 1
+
+        return transition_matrix
+
+    @staticmethod
+    def get_probability_dict(total_encounter: dict) -> dict[str:float]:
         """Receiving the {word:encounter} of the words as dictionary, converts the
         word encounters to ratio of words to total encounter count (word/total
         encounter).
