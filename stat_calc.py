@@ -115,6 +115,8 @@ class Zemberek_Server_Pos_Tagger:
             post_author = row["from"]
             text = row["text"]
 
+            # print(index)
+            # print(str(text))
             if type(text) is not str:
                 continue
 
@@ -147,28 +149,30 @@ class Zemberek_Server_Pos_Tagger:
             else:
                 pos_end_dictionary[pos_tag_list[-1]] += 1
 
-            for index, pos in enumerate(pos_tag_list):
+            for i, pos in enumerate(pos_tag_list):
 
                 # Add pos tag if not in root dictionary
                 if pos not in pos_tag_dictionary:
                     pos_tag_dictionary[pos] = {}
 
                     # If pos is not in dictionary is not in transition matrix
+
                     transition_matrix = Pos_Data_Processor.add_row_and_column_to_matrix(
                         transition_matrix, pos
                     )
 
                 # Add word if not in sub dictionary
-                if word_list[index] not in pos_tag_dictionary[pos]:
-                    pos_tag_dictionary[pos][word_list[index]] = 1
+                if word_list[i] not in pos_tag_dictionary[pos]:
+                    pos_tag_dictionary[pos][word_list[i]] = 1
 
                 else:
-                    pos_tag_dictionary[pos][word_list[index]] += 1
+                    pos_tag_dictionary[pos][word_list[i]] += 1
 
             # Update transition matrix when all new pos rows and columns added
             transition_matrix = Pos_Data_Processor.update_transition_matrix(
                 transition_matrix, pos_tag_list
             )
+
         return (
             pos_tag_dictionary,
             pos_start_dictionary,
@@ -207,7 +211,7 @@ class Zemberek_Server_Pos_Tagger:
 
         def merge_transition_matrix(
             new_matrix: list[list[str, list[int]]],
-            new_index: list[str],
+            # new_index: list[str],
             old_matrix: list[list[str, list[int]]],
         ):
             new_matrix_pos_list = []
@@ -224,7 +228,7 @@ class Zemberek_Server_Pos_Tagger:
                     new_matrix = Pos_Data_Processor.add_row_and_column_to_matrix(
                         new_matrix, j[0]
                     )
-                    new_matrix_pos_list.append(j)
+                    new_matrix_pos_list.append(j[0])
 
             # TODO: Iterating same list twice not good, change if you can think of a
             # better solution, also O(n) of that must be around 2n^2
@@ -233,19 +237,22 @@ class Zemberek_Server_Pos_Tagger:
                 new_row_index = new_matrix_pos_list.index(
                     old_matrix_pos_list[old_row_index]
                 )
-                for old_col_index in old_matrix[old_row_index][-1]:
+                for old_col_index in range(len(old_matrix[old_row_index][-1])):
                     new_col_index = new_matrix_pos_list.index(
                         old_matrix_pos_list[old_col_index]
                     )
+
                 new_matrix[new_row_index][-1][new_col_index] += old_matrix[
                     old_row_index
                 ][-1][old_col_index]
-
-            return
+            print(new_matrix)
+            return new_matrix
 
         pos_start_dictionary_list = []
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
+
+        # print(cheat_pickle or path.exists("messages.pickle"))
 
         if cheat_pickle or path.exists("messages.pickle"):
             # Optimal number of cores server can handle, hand-optimized :(
@@ -256,6 +263,7 @@ class Zemberek_Server_Pos_Tagger:
                 pos_tag_dictionary_list,
                 pos_start_dictionary_list,
                 pos_end_dictionary_list,
+                transition_matrix,
             ) = zip(
                 *Parallel(n_jobs=jobs_in_parallel)(
                     [delayed(self.get_df_pos)(i) for i in df_list]
@@ -266,21 +274,20 @@ class Zemberek_Server_Pos_Tagger:
             new_start_dictionary = {}
             new_end_dictionary = {}
             new_tag_dictionary = {}
+            new_matrix = []
 
             for i in range(len(pos_tag_dictionary_list)):
-                self.merge_start_end_dict(
-                    new_start_dictionary, pos_start_dictionary_list[i]
-                )
-                self.merge_start_end_dict(
-                    new_end_dictionary, pos_end_dictionary_list[i]
-                )
+                merge_start_end_dict(new_start_dictionary, pos_start_dictionary_list[i])
+                merge_start_end_dict(new_end_dictionary, pos_end_dictionary_list[i])
 
-                self.merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
+                merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
+                new_matrix = merge_transition_matrix(new_matrix, transition_matrix[i])
 
             pickle_list = (
                 new_tag_dictionary,
                 new_start_dictionary,
                 new_end_dictionary,
+                new_matrix,
             )
             with open("messages.pickle", "wb") as f:
                 dump(pickle_list, f)
@@ -291,8 +298,14 @@ class Zemberek_Server_Pos_Tagger:
             new_tag_dictionary = pickle_list[0]
             new_start_dictionary = pickle_list[1]
             new_end_dictionary = pickle_list[2]
+            new_matrix = pickle_list[3]
 
-            return new_tag_dictionary, new_start_dictionary, new_end_dictionary
+        return (
+            new_tag_dictionary,
+            new_start_dictionary,
+            new_end_dictionary,
+            new_matrix,
+        )
 
 
 class Pos_Data_Processor:
@@ -303,7 +316,6 @@ class Pos_Data_Processor:
     def add_row_and_column_to_matrix(
         matrix: list[list[str, list[int]]], new_pos: str
     ) -> list[list[str, list[int]]]:
-
         # Check if matrix empty
         if len(matrix) != 0:
             # Add column
@@ -316,7 +328,7 @@ class Pos_Data_Processor:
 
         else:
             new_column = [new_pos, [0]]
-            matrix = matrix.append(new_column)
+            matrix.append(new_column)
 
         return matrix
 

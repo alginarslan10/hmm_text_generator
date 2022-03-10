@@ -27,6 +27,9 @@ class HMM_Text_Generator:
 
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
-tag, start, end = req_obj.get_df_pos_parallel(cheat_pickle="messages.pickle")
+tag, start, end, transition_matrix = req_obj.get_df_pos_parallel(
+    cheat_pickle="messages.pickle"
+)
+print(transition_matrix)
 
 # generator = HMM_Text_Generator(start, end, tag)
