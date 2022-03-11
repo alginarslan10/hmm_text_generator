@@ -1,6 +1,6 @@
 from pomegranate import DiscreteDistribution, HiddenMarkovModel, State
 
-from stat_calc import Zemberek_Server_Pos_Tagger
+from stat_calc import Pos_Data_Processor, Zemberek_Server_Pos_Tagger
 
 
 class HMM_Text_Generator:
@@ -27,9 +27,11 @@ class HMM_Text_Generator:
 
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
-tag, start, end, transition_matrix = req_obj.get_df_pos_parallel(
+# tag, start, end, transition_matrix_zip = req_obj.get_df_pos(req_obj.df)
+tag, start, end, transition_matrix_zip = req_obj.get_df_pos_parallel(
     cheat_pickle="messages.pickle"
 )
-print(transition_matrix)
-
+indices, tmatrix = zip(*transition_matrix_zip)
+indices = list(indices)
+print(indices)
 # generator = HMM_Text_Generator(start, end, tag)
