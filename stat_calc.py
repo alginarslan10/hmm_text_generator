@@ -109,14 +109,14 @@ class Zemberek_Server_Pos_Tagger:
         pos_tag_dictionary = {}
         pos_start_dictionary = {}
         pos_end_dictionary = {}
-        transition_matrix_zip = []
+        indices = []
+        matrix = np.array([[]])
 
         for index, row in df.iterrows():
             post_type = row["type"]
             post_author = row["from"]
             text = row["text"]
 
-            print(index)
             # print(str(text))
             if type(text) is not str:
                 continue
@@ -157,10 +157,8 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos] = {}
 
                     # If pos is not in dictionary is not in transition matrix
-                    transition_matrix_zip = (
-                        Pos_Data_Processor.add_row_and_column_to_matrix(
-                            transition_matrix_zip, pos
-                        )
+                    indices, matrix = Pos_Data_Processor.add_row_and_column_to_matrix(
+                        [indices, matrix], pos
                     )
 
                 # Add word if not in sub dictionary
@@ -171,15 +169,15 @@ class Zemberek_Server_Pos_Tagger:
                     pos_tag_dictionary[pos][word_list[i]] += 1
 
             # Update transition matrix when all new pos rows and columns added
-            transition_matrix_zip = Pos_Data_Processor.update_transition_matrix(
-                transition_matrix_zip, pos_tag_list
+            indices, matrix = Pos_Data_Processor.update_transition_matrix(
+                [indices, matrix], pos_tag_list
             )
 
         return (
             pos_tag_dictionary,
             pos_start_dictionary,
             pos_end_dictionary,
-            transition_matrix_zip,
+            [indices, matrix],
         )
 
     def get_df_pos_parallel(
@@ -212,29 +210,22 @@ class Zemberek_Server_Pos_Tagger:
                     new_dict[pos] = old_dict[pos]
 
         def merge_transition_matrix(
-            new_matrix_zip: list[str, np.array],
-            old_matrix_zip: list[str, np.array],
+            new_matrix_list: list[list[str], np.array],
+            old_matrix_list: list[list[str], np.array],
         ) -> list[str, np.array]:
-            new_matrix_indices = []
-            new_matrix = []
-            try:
-                new_matrix_indices, new_matrix = zip(*new_matrix_zip)
-                new_matrix_indices = list(new_matrix)
-            except ValueError:
-                new_matrix_indices = []
-                new_matrix = np.array([[]])
-            old_matrix_indices, old_matrix = zip(*old_matrix_zip)
-            old_matrix_indices = list(old_matrix_indices)
+
+            new_matrix_indices, new_matrix = new_matrix_list
+            old_matrix_indices, old_matrix = old_matrix_list
 
             for old_pos in old_matrix_indices:
                 # If pos does not exist in new matrix,add
                 if old_pos not in new_matrix_indices:
-                    new_matrix_zip = Pos_Data_Processor.add_row_and_column_to_matrix(
-                        zip(new_matrix_indices, new_matrix), old_pos
+                    (
+                        new_matrix_indices,
+                        new_matrix,
+                    ) = Pos_Data_Processor.add_row_and_column_to_matrix(
+                        [new_matrix_indices, new_matrix], old_pos
                     )
-                # Update unzipped values for for loop
-                new_matrix_indices, new_matrix = zip(*new_matrix_zip)
-                new_matrix_indices = list(new_matrix_indices)
 
             # TODO: Iterating same list twice not good, change if you can think of a
             # better solution, also O(n) of that must be around 2n^2
@@ -251,13 +242,13 @@ class Zemberek_Server_Pos_Tagger:
                     new_matrix[new_row_index][new_col_index] += old_matrix[
                         old_row_index
                     ][old_col_index]
-            new_zip = zip(new_matrix_indices, new_matrix)
-            return new_zip
+
+            return new_matrix_indices, new_matrix
 
         pos_start_dictionary_list = []
         pos_end_dictionary_list = []
         pos_tag_dictionary_list = []
-        transition_matrix_zip_list = []
+        tmatrix_list_list = []
 
         if cheat_pickle is False or not (path.exists("messages.pickle")):
             # Optimal number of cores server can handle, hand-optimized :(
@@ -268,7 +259,7 @@ class Zemberek_Server_Pos_Tagger:
                 pos_tag_dictionary_list,
                 pos_start_dictionary_list,
                 pos_end_dictionary_list,
-                transition_matrix_zip_list,
+                tmatrix_list_list,
             ) = zip(
                 *Parallel(n_jobs=jobs_in_parallel)(
                     [delayed(self.get_df_pos)(i) for i in df_list]
@@ -279,22 +270,23 @@ class Zemberek_Server_Pos_Tagger:
             new_start_dictionary = {}
             new_end_dictionary = {}
             new_tag_dictionary = {}
-            new_matrix_zip = []
+            new_indices = []
+            new_tmatrix = np.array([[]])
 
             for i in range(len(pos_tag_dictionary_list)):
                 merge_start_end_dict(new_start_dictionary, pos_start_dictionary_list[i])
                 merge_start_end_dict(new_end_dictionary, pos_end_dictionary_list[i])
 
                 merge_nested_dict(new_tag_dictionary, pos_tag_dictionary_list[i])
-                new_matrix_zip = merge_transition_matrix(
-                    new_matrix_zip, transition_matrix_zip_list[i]
+                new_indices, new_tmatrix = merge_transition_matrix(
+                    [new_indices, new_tmatrix], tmatrix_list_list[i]
                 )
 
             pickle_list = (
                 new_tag_dictionary,
                 new_start_dictionary,
                 new_end_dictionary,
-                new_matrix_zip,
+                [new_indices, new_tmatrix],
             )
             with open("messages.pickle", "wb") as f:
                 dump(pickle_list, f)
@@ -305,13 +297,13 @@ class Zemberek_Server_Pos_Tagger:
             new_tag_dictionary = pickle_list[0]
             new_start_dictionary = pickle_list[1]
             new_end_dictionary = pickle_list[2]
-            new_matrix_zip = pickle_list[3]
+            new_indices, new_tmatrix = pickle_list[3]
 
         return (
             new_tag_dictionary,
             new_start_dictionary,
             new_end_dictionary,
-            new_matrix_zip,
+            [new_indices, new_tmatrix],
         )
 
 
@@ -321,38 +313,36 @@ class Pos_Data_Processor:
 
     @staticmethod
     def add_row_and_column_to_matrix(
-        matrix_zip: list[str, np.array], new_pos: str
-    ) -> list[str, np.array]:
-        matrix = np.array([[]])
-        indices = []
-        try:
-            indices, matrix = zip(*matrix_zip)
-            indices = list(indices)
+        matrix_list: list[list[str], np.array], new_pos: str
+    ) -> list[list[str], np.array]:
+        indices, matrix = matrix_list
+
+        if len(matrix[0]) != 0:
             # Add row
             row_size = len(matrix[0])
             row = [[0] * row_size]
             matrix = np.append(matrix, row, axis=0)
-            indices.append(new_pos)
 
-            col = np.zeros((row_size + 1, 1))
             # Add columns
+            col = np.zeros((row_size + 1, 1))
             matrix = np.append(matrix, col, axis=1)
 
-        # If zip is empty
-        except ValueError:
+            indices.append(new_pos)
+
+        # If matrix empty
+        else:
             matrix = np.array([[0]])
             indices.append(new_pos)
 
-        new_zip = zip(indices, matrix)
-        return new_zip
+        return [indices, matrix]
 
     @staticmethod
     def update_transition_matrix(
-        transition_matrix_zip: list[str, np.array],
+        transition_matrix_list: list[list[str], np.array],
         pos_list: [str],
-    ) -> list[str, np.array]:
-        indices, transition_matrix = zip(*transition_matrix_zip)
-        indices = list(indices)
+    ) -> list[list[str], np.array]:
+        indices = transition_matrix_list[0]
+        transition_matrix = transition_matrix_list[1]
 
         for pos in range(len(pos_list) - 1):
             row = pos_list[pos]
@@ -363,8 +353,7 @@ class Pos_Data_Processor:
 
             transition_matrix[row_index][col_index] += 1
 
-        new_zip = zip(indices, transition_matrix)
-        return new_zip
+        return [indices, transition_matrix]
 
     @staticmethod
     def get_probability_dict(total_encounter: dict) -> dict[str:float]:
@@ -395,15 +384,14 @@ class Pos_Data_Processor:
 
     @staticmethod
     def normalize_transition_matrix(
-        matrix_zip: list[str, np.array]
-    ) -> list[str, np.array]:
-        indices, matrix = zip(*matrix_zip)
-        indices = list(indices)
+        matrix_list: list[list[str], np.array]
+    ) -> list[list[str], np.array]:
+        indices = matrix_list[0]
+        matrix = matrix_list[1]
         row_summations = np.sum(matrix, axis=1)
         normalized_matrix = matrix / row_summations[:, None]
 
-        new_zip = zip(indices, normalized_matrix)
-        return new_zip
+        return [indices, normalized_matrix]
 
 
 def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
