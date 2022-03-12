@@ -4,10 +4,11 @@ from stat_calc import Pos_Data_Processor, Zemberek_Server_Pos_Tagger
 
 
 class HMM_Text_Generator:
-    def __init__(self, start_pos, end_pos, all_pos_tag):
+    def __init__(self, start_pos, end_pos, all_pos_tag, transition_matrix_list):
         self.start_pos = start_pos
         self.end_pos = end_pos
         self.all_pos_tag = all_pos_tag
+        self.tmatrix_list = transition_matrix_list
 
     def __get_discrete_dist(self, dist: dict[str:int]):
         return DiscreteDistribution(dist)
@@ -28,10 +29,11 @@ class HMM_Text_Generator:
 file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
 req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
 # tag, start, end, transition_matrix_zip = req_obj.get_df_pos(req_obj.df)
-tag, start, end, transition_matrix_zip = req_obj.get_df_pos_parallel(
+tag, start, end, transition_matrix_list = req_obj.get_df_pos_parallel(
     cheat_pickle="messages.pickle"
 )
-indices, tmatrix = zip(*transition_matrix_zip)
-indices = list(indices)
-print(indices)
+transition_matrix_list = Pos_Data_Processor.normalize_transition_matrix(
+    transition_matrix_list
+)
+
 # generator = HMM_Text_Generator(start, end, tag)
