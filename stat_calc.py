@@ -117,17 +117,18 @@ class Zemberek_Server_Pos_Tagger:
             post_author = row["from"]
             text = row["text"]
 
-            # print(str(text))
+            if post_type != "message":
+                continue
+
             if type(text) is not str:
                 continue
 
             text = self.remove_punctuation(text)
 
-            if post_type != "message":
-                continue
-
             if self.is_text_empty(text):
                 continue
+
+            text = text.lower()
 
             # Check if there is user restriction and if there is skip
             # non-restricted users.
@@ -282,6 +283,13 @@ class Zemberek_Server_Pos_Tagger:
                     [new_indices, new_tmatrix], tmatrix_list_list[i]
                 )
 
+            new_start_dictionary = Pos_Data_Processor.add_non_starting_ending_pos(
+                new_start_dictionary, new_indices
+            )
+            new_end_dictionary = Pos_Data_Processor.add_non_starting_ending_pos(
+                new_end_dictionary, new_indices
+            )
+
             pickle_list = (
                 new_tag_dictionary,
                 new_start_dictionary,
@@ -310,6 +318,40 @@ class Zemberek_Server_Pos_Tagger:
 class Pos_Data_Processor:
     def __init__(self):
         return
+
+    @staticmethod
+    def add_non_starting_ending_pos(
+        missing_dict: dict[str:int], indices_list: list[str]
+    ):
+        for i in indices_list:
+            if i not in missing_dict.keys():
+                missing_dict[i] = 0
+
+        return missing_dict
+
+    @staticmethod
+    def sort_by_indices(
+        unsorted_list: list[list[str], np.array]
+    ) -> list[list[str], np.array]:
+        indices, array = unsorted_list
+
+        temp_indices = 0
+        temp_array = 0
+
+        for i in range(1, len(indices)):
+            temp_indices = indices[i]
+            temp_array = array[i]
+            j = i - 1
+
+            while j >= 0 and temp_indices < indices[j]:
+                indices[j + 1] = indices[j]
+                array[j + 1] = array[j]
+                j -= 1
+
+            indices[j + 1] = temp_indices
+            array[j + 1] = temp_array
+
+        return [indices, array]
 
     @staticmethod
     def add_row_and_column_to_matrix(
@@ -356,7 +398,7 @@ class Pos_Data_Processor:
         return [indices, transition_matrix]
 
     @staticmethod
-    def get_probability_dict(total_encounter: dict) -> dict[str:float]:
+    def get_probability_dict(words_dict: dict) -> dict[str:float]:
         """Receiving the {word:encounter} of the words as dictionary, converts the
         word encounters to ratio of words to total encounter count (word/total
         encounter).
@@ -371,14 +413,14 @@ class Pos_Data_Processor:
         prob_dictionary: dict
             Encounter probabilty of the words
         """
-        total_word_encounter = 0
+        total_word_encounter_sum = 0
         prob_dictionary = {}
 
-        for encounter in total_encounter.values():
-            total_word_encounter += encounter
+        for encounter in words_dict.values():
+            total_word_encounter_sum += encounter
 
-        for word in total_encounter:
-            prob_dictionary[word] = total_encounter[word] / total_word_encounter
+        for word in words_dict:
+            prob_dictionary[word] = words_dict[word] / total_word_encounter_sum
 
         return prob_dictionary
 
@@ -391,7 +433,23 @@ class Pos_Data_Processor:
         row_summations = np.sum(matrix, axis=1)
         normalized_matrix = matrix / row_summations[:, None]
 
-        return [indices, normalized_matrix]
+        return Pos_Data_Processor.sort_by_indices([indices, normalized_matrix])
+
+    @staticmethod
+    def convert_dictionary_to_matrix(
+        dictionary: dict[str:int],
+    ) -> list[list[str], np.array]:
+        indices = []
+        probability_vector = np.array([])
+        sum_encounter = sum(dictionary.values())
+
+        for pos in dictionary:
+            indices.append(pos)
+            probability_vector = np.append(
+                probability_vector, [dictionary[pos] / sum_encounter], axis=0
+            )
+
+        return Pos_Data_Processor.sort_by_indices([indices, probability_vector])
 
 
 def test_parallel_time(req_obj: Zemberek_Server_Pos_Tagger):
