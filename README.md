@@ -11,5 +11,5 @@ Setup script needs root user priviliges to install docker
 ```
 $ sudo -u root
 
-\# ./setup.sh
+# ./setup.sh
 ```
