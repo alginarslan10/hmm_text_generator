@@ -41,14 +41,9 @@ class HMM_Text_Generator:
             self.tmatrix, dist_list, self.start_pos, self.end_pos
         )
         model.bake()
+        return model
 
-
-file_path = "/home/algin/İndirilenler/Telegram Desktop/Data/result.json"
-req_obj = Zemberek_Server_Pos_Tagger("http://localhost", 4567, file_path)
-# tag, start, end, transition_matrix_zip = req_obj.get_df_pos(req_obj.df)
-tag, start, end, transition_matrix_list = req_obj.get_df_pos_parallel(
-    cheat_pickle="messages.pickle"
-)
-hmm_text = HMM_Text_Generator(start, end, tag, transition_matrix_list)
+    def get_sentence(self):
+        return self.model.sample()
 
 # generator = HMM_Text_Generator(start, end, tag)
