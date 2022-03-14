@@ -6,7 +6,6 @@ from typing import Tuple
 
 import numpy as np
 from joblib import Parallel, delayed
-# from numpy import array_split
 from pandas import DataFrame, json_normalize, read_json
 from requests import post
 
@@ -24,8 +23,9 @@ class Zemberek_Server_Pos_Tagger:
             df = json_normalize(df["messages"])
             return df
         except Exception as e:
+            print("Could not read the data beacause of following reason:")
             print(str(e))
-            return None
+            exit()
 
     def is_text_empty(self, text):
         if text.replace(" ", "") == "":

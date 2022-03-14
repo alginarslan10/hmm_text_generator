@@ -1,6 +1,6 @@
 from pomegranate import DiscreteDistribution, HiddenMarkovModel
 
-from stat_calc import Pos_Data_Processor, Zemberek_Server_Pos_Tagger
+from stat_calc import Pos_Data_Processor
 
 
 class HMM_Text_Generator:
@@ -8,11 +8,11 @@ class HMM_Text_Generator:
         (
             start_indices,
             self.start_pos,
-        ) = Pos_Data_Processor.convert_dictionary_to_matrix(start)
+        ) = Pos_Data_Processor.convert_dictionary_to_matrix(start_pos)
         (
             end_indices,
             self.end_pos,
-        ) = Pos_Data_Processor.convert_dictionary_to_matrix(end)
+        ) = Pos_Data_Processor.convert_dictionary_to_matrix(end_pos)
         (
             self.tmatrix_indices,
             self.tmatrix,
@@ -44,6 +44,14 @@ class HMM_Text_Generator:
         return model
 
     def get_sentence(self):
-        return self.model.sample()
+        new_text = " ".join(self.model.sample())
+        new_text.capitalize()
+        new_text += "."
+        return new_text
 
-# generator = HMM_Text_Generator(start, end, tag)
+    def get_at_least_n_word_text(self, n):
+        new_text = ""
+        while len(new_text.split(" ")) < n:
+            new_text += self.get_sentence()
+
+        return new_text
