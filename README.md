@@ -5,8 +5,11 @@ HMM does not provide wonders for language models so abandon hope all ye who use 
 
 ## Installation
 ### Ubuntu
+---
 Setup script needs root user priviliges to install docker
-'''sh
+
+```
 $ sudo -u root
-# ./setup.sh
-'''
+
+\# ./setup.sh
+```
